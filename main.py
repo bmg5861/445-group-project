@@ -1,14 +1,16 @@
+import concurrent.futures
 import tensorflow as tf
 import numpy as np
 import urllib
-import requests
 from PIL import Image
 from io import BytesIO
-import matplotlib.pyplot as plt
+import requests
 from sklearn.model_selection import train_test_split
 
+CALLRANGE = 20
 # Function to load and preprocess image from URL
-def load_and_preprocess_image(url, label):
+def load_and_preprocess_image(url_label):
+    url, label = url_label
     response = urllib.request.urlopen(url)
     img_data = response.read()
     img = Image.open(BytesIO(img_data))
@@ -28,8 +30,9 @@ def add_img_urls(api_url, list):
             list.append(e)
 
 waterfalls = []
-add_img_urls("https://network.satnogs.org/api/observations/?id=&status=&ground_station=2528&start=&end=&satellite__norad_cat_id=&transmitter_uuid=&transmitter_mode=&transmitter_type=&waterfall_status=1&vetted_status=&vetted_user=&observer=&observation_id=", waterfalls)
-add_img_urls("https://network.satnogs.org/api/observations/?id=&status=&ground_station=2528&start=&end=&satellite__norad_cat_id=&transmitter_uuid=&transmitter_mode=&transmitter_type=&waterfall_status=0&vetted_status=&vetted_user=&observer=&observation_id=", waterfalls)
+for calls in range(0, CALLRANGE):
+    add_img_urls("https://network.satnogs.org/api/observations/?id=&status=&ground_station=2528&start=&end=&satellite__norad_cat_id=&transmitter_uuid=&transmitter_mode=&transmitter_type=&waterfall_status=1&vetted_status=&vetted_user=&observer=&observation_id=", waterfalls)
+    add_img_urls("https://network.satnogs.org/api/observations/?id=&status=&ground_station=2528&start=&end=&satellite__norad_cat_id=&transmitter_uuid=&transmitter_mode=&transmitter_type=&waterfall_status=0&vetted_status=&vetted_user=&observer=&observation_id=", waterfalls)
 
 image_data = []
 
@@ -42,11 +45,12 @@ for waterfall in waterfalls:
         e = (waterfall.get("waterfall"), 0)
         image_data.append(e)
 
-# Load images from URLs and preprocess them
-images_and_labels = [load_and_preprocess_image(url, label) for url, label in image_data]
-images, labels = zip(*images_and_labels)
+# Load images from URLs and preprocess them in parallel
+with concurrent.futures.ThreadPoolExecutor() as executor:
+    images_and_labels = list(executor.map(load_and_preprocess_image, image_data))
 
 # Convert to NumPy arrays
+images, labels = zip(*images_and_labels)
 images = np.array(images)
 labels = np.array(labels)
 
@@ -58,11 +62,11 @@ train_images, test_images, train_labels, test_labels = train_test_split(
 # Add batch dimension to train_images
 train_images = np.expand_dims(train_images, axis=-1)
 
-try:
+try: 
     model = tf.keras.models.load_model("waterfall")
     print("Model loaded successfully.")
 
-except:
+except:    
     # Building the model
     model = tf.keras.Sequential([
         tf.keras.layers.Flatten(input_shape=(64, 64)),
@@ -72,27 +76,17 @@ except:
         tf.keras.layers.Dense(2)
     ])
 
-    # Compiling the model with a lower learning rate
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
-                  loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-                  metrics=['accuracy'])
+    # Compiling the model
+    model.compile(optimizer='adam',
+                loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+                metrics=['accuracy'])
 
-# Training the model with data augmentation
-datagen = tf.keras.preprocessing.image.ImageDataGenerator(
-    rotation_range=20,  # Randomly rotate images by up to 20 degrees
-    width_shift_range=0.1,  # Randomly shift images horizontally by up to 10%
-    height_shift_range=0.1,  # Randomly shift images vertically by up to 10%
-    zoom_range=0.1,  # Randomly zoom images by up to 10%
-    horizontal_flip=True  # Randomly flip images horizontally
-)
-
-datagen.fit(train_images)
-
-model.fit(datagen.flow(train_images, train_labels, batch_size=32),
-          epochs=20, validation_data=(test_images, test_labels))
+# Training the model
+model.fit(train_images, train_labels, epochs=10)
 
 # Evaluating results
 test_loss, test_acc = model.evaluate(test_images, test_labels, verbose=2)
 print('\nTest accuracy:', test_acc)
 
+# Save the model
 model.save("waterfall")
