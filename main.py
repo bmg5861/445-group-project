@@ -7,7 +7,7 @@ from io import BytesIO
 import requests
 from sklearn.model_selection import train_test_split
 
-CALLRANGE = 20
+CALLRANGE = 1
 # Function to load and preprocess image from URL
 def load_and_preprocess_image(url_label):
     url, label = url_label
