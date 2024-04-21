@@ -1,51 +1,35 @@
 import concurrent.futures
 import tensorflow as tf
 import numpy as np
-import urllib
+import os
 from PIL import Image
-from io import BytesIO
-import requests
 from sklearn.model_selection import train_test_split
 
-CALLRANGE = 1
-# Function to load and preprocess image from URL
-def load_and_preprocess_image(url_label):
-    url, label = url_label
-    response = urllib.request.urlopen(url)
-    img_data = response.read()
-    img = Image.open(BytesIO(img_data))
+EPOCHS = 10
+IMAGE_SIZE = (64, 64)
+IMAGE_CHANNELS = 1
+DATA_DIRECTORY = "" # put current working directory here
+
+# Function to load and preprocess image from local directory
+def load_and_preprocess_image(image_path_label):
+    image_path, label = image_path_label
+    img = Image.open(image_path)
     img = img.convert('L')  # Convert image to grayscale
-    img = img.resize((64, 64))  # Resize image
+    img = img.resize(IMAGE_SIZE)  # Resize image
     img = np.array(img) / 255.0  # Normalize pixel values to [0, 1]
     return img, label
 
-def add_img_urls(api_url, list):
-    r = requests.get(api_url)
-    j = r.json()
-    for entry in j:
-        if entry["waterfall"]:
-            e = {}
-            e["waterfall"]=entry["waterfall"]
-            e["waterfall_status"]=entry["waterfall_status"]
-            list.append(e)
+# Function to add image paths and labels
+def add_image_paths(directory, label, image_data):
+    image_paths = [os.path.join(directory, filename) for filename in os.listdir(directory)]
+    image_data.extend([(image_path, label) for image_path in image_paths])
 
-waterfalls = []
-for calls in range(0, CALLRANGE):
-    add_img_urls("https://network.satnogs.org/api/observations/?id=&status=&ground_station=2528&start=&end=&satellite__norad_cat_id=&transmitter_uuid=&transmitter_mode=&transmitter_type=&waterfall_status=1&vetted_status=&vetted_user=&observer=&observation_id=", waterfalls)
-    add_img_urls("https://network.satnogs.org/api/observations/?id=&status=&ground_station=2528&start=&end=&satellite__norad_cat_id=&transmitter_uuid=&transmitter_mode=&transmitter_type=&waterfall_status=0&vetted_status=&vetted_user=&observer=&observation_id=", waterfalls)
-
+# Collect image paths and labels
 image_data = []
+add_image_paths(os.path.join(DATA_DIRECTORY, "withsignal"), 1, image_data)
+add_image_paths(os.path.join(DATA_DIRECTORY, "withoutsignal"), 0, image_data)
 
-for waterfall in waterfalls:
-    status = waterfall.get("waterfall_status")
-    if (status == "with-signal"):
-        e = (waterfall.get("waterfall"), 1)
-        image_data.append(e)
-    else:
-        e = (waterfall.get("waterfall"), 0)
-        image_data.append(e)
-
-# Load images from URLs and preprocess them in parallel
+# Load and preprocess images in parallel
 with concurrent.futures.ThreadPoolExecutor() as executor:
     images_and_labels = list(executor.map(load_and_preprocess_image, image_data))
 
@@ -69,7 +53,7 @@ try:
 except:    
     # Building the model
     model = tf.keras.Sequential([
-        tf.keras.layers.Flatten(input_shape=(64, 64)),
+        tf.keras.layers.Flatten(input_shape=(*IMAGE_SIZE, IMAGE_CHANNELS)),
         tf.keras.layers.Dense(128, activation='relu'),
         tf.keras.layers.Dropout(0.5),  # Dropout layer for regularization
         tf.keras.layers.Dense(64, activation='relu'),  # Adding another hidden layer
@@ -82,7 +66,7 @@ except:
                 metrics=['accuracy'])
 
 # Training the model
-model.fit(train_images, train_labels, epochs=10)
+model.fit(train_images, train_labels, epochs=EPOCHS, verbose=1)
 
 # Evaluating results
 test_loss, test_acc = model.evaluate(test_images, test_labels, verbose=2)
