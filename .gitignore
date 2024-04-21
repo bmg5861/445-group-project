@@ -167,4 +167,5 @@ waterfalls-api-calls.py
 /hyperparameters
 /waterfall_best_model
 /waterfallModels
+/waterfall_hypermodel
 tracker.txt

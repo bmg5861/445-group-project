@@ -1,5 +1,7 @@
 import concurrent.futures
 import tensorflow as tf
+from tensorflow import keras
+import keras_tuner as kt
 import numpy as np
 import os
 from PIL import Image
@@ -65,8 +67,11 @@ def build_model(hp):
     
     model.add(tf.keras.layers.Dense(2))
 
+    # Tune the learning rate for the optimizer
+    # Choose an optimal value from 0.01, 0.001, or 0.0001
+    hp_learning_rate = hp.Choice('learning_rate', values=[1e-2, 1e-3, 1e-4])
     # Compile the model
-    model.compile(optimizer='adam',
+    model.compile(optimizer=keras.optimizers.Adam(learning_rate=hp_learning_rate),
                   loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                   metrics=['accuracy'])
     
@@ -81,14 +86,39 @@ tuner = RandomSearch(
     project_name='waterfall_tuning'
 )
 
+stop_early = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5)
+
 # Search for the best hyperparameter configuration
-tuner.search(train_images, train_labels, epochs=10, validation_data=(test_images, test_labels))
+tuner.search(train_images, train_labels, epochs=128, validation_data=(test_images, test_labels), callbacks=[stop_early])
+
+best_hps=tuner.get_best_hyperparameters(num_trials=1)[0]
 
 # Get the best model
 best_model = tuner.get_best_models(num_models=1)[0]
 
-# Evaluate the best model
-eval_result = best_model.evaluate(test_images, test_labels)
+# Get the optimal hyperparameters
+print(f"""
+The hyperparameter search is complete. The optimal number of units in the first densely-connected
+layer is {best_hps.get('units')} and the optimal learning rate for the optimizer
+is {best_hps.get('learning_rate')}.
+""")
+
+model = tuner.hypermodel.build(best_hps)
+
+history = model.fit(train_images, train_labels, epochs=128, validation_data=(test_images, test_labels))
+
+val_acc_per_epoch = history.history['val_accuracy']
+best_epoch = val_acc_per_epoch.index(max(val_acc_per_epoch)) + 1
+print('Best epoch: %d' % (best_epoch,))
+
+hypermodel = tuner.hypermodel.build(best_hps)
+
+# Retrain the model
+hypermodel.fit(train_images, train_labels, epochs=best_epoch, validation_data=(test_images, test_labels))
+
+eval_result = hypermodel.evaluate(test_images, test_labels)
+print("[test loss, test accuracy]:", eval_result)
 
 # Save the best model
 best_model.save("waterfall_best_model")
+hypermodel.save("waterfall_hypermodel")
