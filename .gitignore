@@ -164,4 +164,6 @@ waterfalls-api-calls.py
 /waterfall
 /withoutsignal
 /withsignal
+/hyperparameters
+/waterfall_best_model
 tracker.txt

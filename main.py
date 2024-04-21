@@ -4,11 +4,12 @@ import numpy as np
 import os
 from PIL import Image
 from sklearn.model_selection import train_test_split
+from kerastuner.tuners import RandomSearch
+from kerastuner.engine.hyperparameters import HyperParameters
 
-EPOCHS = 10
 IMAGE_SIZE = (64, 64)
 IMAGE_CHANNELS = 1
-DATA_DIRECTORY = "" # put current working directory here
+DATA_DIRECTORY = ""  # Put current working directory here
 
 # Function to load and preprocess image from local directory
 def load_and_preprocess_image(image_path_label):
@@ -43,34 +44,51 @@ train_images, test_images, train_labels, test_labels = train_test_split(
     images, labels, test_size=0.2, random_state=42
 )
 
-# Add batch dimension to train_images
-train_images = np.expand_dims(train_images, axis=-1)
+# Define the hyperparameter search space
+def build_model(hp):
+    model = tf.keras.Sequential()
+    model.add(tf.keras.layers.Conv2D(32, (3, 3), activation='relu', input_shape=(*IMAGE_SIZE, IMAGE_CHANNELS)))
+    model.add(tf.keras.layers.MaxPooling2D((2, 2)))
+    
+    # Tune the number of convolutional layers
+    for i in range(hp.Int('num_conv_layers', 1, 3)):
+        model.add(tf.keras.layers.Conv2D(hp.Int(f'conv_{i}_units', min_value=32, max_value=256, step=32), (3, 3), activation='relu'))
+        model.add(tf.keras.layers.MaxPooling2D((2, 2)))
+    
+    model.add(tf.keras.layers.Flatten())
+    
+    # Tune the number of units in the Dense layer
+    model.add(tf.keras.layers.Dense(units=hp.Int('units', min_value=32, max_value=512, step=32), activation='relu'))
+    
+    # Tune the dropout rate for regularization
+    model.add(tf.keras.layers.Dropout(rate=hp.Float('dropout', min_value=0.1, max_value=0.5, step=0.1)))
+    
+    model.add(tf.keras.layers.Dense(2))
 
-try: 
-    model = tf.keras.models.load_model("waterfall")
-    print("Model loaded successfully.")
-
-except:    
-    # Building the model
-    model = tf.keras.Sequential([
-        tf.keras.layers.Flatten(input_shape=(*IMAGE_SIZE, IMAGE_CHANNELS)),
-        tf.keras.layers.Dense(128, activation='relu'),
-        tf.keras.layers.Dropout(0.5),  # Dropout layer for regularization
-        tf.keras.layers.Dense(64, activation='relu'),  # Adding another hidden layer
-        tf.keras.layers.Dense(2)
-    ])
-
-    # Compiling the model
+    # Compile the model
     model.compile(optimizer='adam',
-                loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-                metrics=['accuracy'])
+                  loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+                  metrics=['accuracy'])
+    
+    return model
 
-# Training the model
-model.fit(train_images, train_labels, epochs=EPOCHS, verbose=1)
+# Instantiate the tuner
+tuner = RandomSearch(
+    build_model,
+    objective='val_accuracy',
+    max_trials=5,  # Number of hyperparameter combinations to try
+    directory='hyperparameters',
+    project_name='waterfall_tuning'
+)
 
-# Evaluating results
-test_loss, test_acc = model.evaluate(test_images, test_labels, verbose=2)
-print('\nTest accuracy:', test_acc)
+# Search for the best hyperparameter configuration
+tuner.search(train_images, train_labels, epochs=10, validation_data=(test_images, test_labels))
 
-# Save the model
-model.save("waterfall")
+# Get the best model
+best_model = tuner.get_best_models(num_models=1)[0]
+
+# Evaluate the best model
+eval_result = best_model.evaluate(test_images, test_labels)
+
+# Save the best model
+best_model.save("waterfall_best_model")
